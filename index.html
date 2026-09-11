@@ -782,13 +782,22 @@
         const p = 0.008;
         const bbox = (minLat - p) + "," + (minLon - p) + "," + (maxLat + p) + "," + (maxLon + p);
         const q = '[out:json][timeout:20];node["highway"="speed_camera"](' + bbox + ');out;';
-        const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 15000); // não trava esperando para sempre
-        let data;
-        try {
-          const resp = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q), { signal: ctrl.signal });
-          data = await resp.json();
-        } finally { clearTimeout(to); }
+        const servers = [
+          "https://overpass-api.de/api/interpreter",
+          "https://overpass.kumi.systems/api/interpreter"
+        ];
+        let data = null;
+        for (const ep of servers) {
+          try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 15000);
+            const resp = await fetch(ep + "?data=" + encodeURIComponent(q), { signal: ctrl.signal });
+            clearTimeout(to);
+            const txt = await resp.text();
+            if (txt.trim().charAt(0) === "{") { data = JSON.parse(txt); break; } // só JSON válido
+          } catch (e) { /* tenta o próximo servidor */ }
+        }
+        if (!data) throw new Error("radares indisponíveis no momento");
         const raw = (data.elements || []).map(e => ({
           lat: e.lat, lon: e.lon, max: (e.tags && (e.tags.maxspeed || e.tags["maxspeed:forward"])) || ""
         }));
