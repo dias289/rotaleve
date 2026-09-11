@@ -208,6 +208,12 @@
     #navMap { position: fixed; inset: 0; z-index: 7000; background: #0b1218; }
     #navMap[hidden] { display: none !important; }
     .gl-cursor svg { display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+    .nav-cam {
+      position: absolute; top: 96px; left: 12px; right: 12px; pointer-events: none;
+      background: var(--bad); color: #2a0a0a; font-weight: 800; font-size: 15px;
+      border-radius: 12px; padding: 10px 14px; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.45);
+    }
+    .nav-cam[hidden] { display: none !important; }
     .maplibregl-ctrl-attrib { font-size: 10px; }
     .legend {
       display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
@@ -304,6 +310,7 @@
       <div class="nav-dist" id="navDist">—</div>
       <div class="nav-instr" id="navInstr">Iniciando navegação…</div>
     </div>
+    <div id="navCam" class="nav-cam" hidden></div>
     <button id="navMute" class="nav-round" title="Voz">🔊</button>
     <button id="navExit" class="nav-round nav-exit">✕ Sair</button>
   </div>
@@ -662,6 +669,7 @@
     let navWatch = null, navMarker = null, navSteps = [], navIndex = 0, navAnnounced = {};
     let navMuted = false, wakeLock = null, navLastPt = null, navZoomSet = false;
     let navDest = null, navRouteCoords = [], offCount = 0, rerouting = false;
+    let navCameras = [], camAlerted = {}, glPendingCameras = false;
 
     // direção (0-360) entre dois pontos [lon,lat]
     function bearing(a, b) {
@@ -713,7 +721,11 @@
           '<circle cx="18" cy="18" r="16" fill="#38bdf8" opacity="0.25"/>' +
           '<path d="M18 3 L29 31 L18 24 L7 31 Z" fill="#38bdf8" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>';
         glMarker = new maplibregl.Marker({ element: elm });
-        glMap.on("load", () => { glReady = true; if (glPendingRoute) { setGLRoute(glPendingRoute); glPendingRoute = null; } });
+        glMap.on("load", () => {
+          glReady = true;
+          if (glPendingRoute) { setGLRoute(glPendingRoute); glPendingRoute = null; }
+          if (glPendingCameras) { setGLCameras(); glPendingCameras = false; }
+        });
       } catch (e) { glMap = null; glMarker = null; } // sem WebGL → cai no mapa Leaflet
     }
     function setGLRoute(coords) {
@@ -748,16 +760,71 @@
       else { map.panTo(center, { animate: true, duration: 0.9, easeLinearity: 0.4 }); }
     }
 
-    // menor distância (m) da posição à linha da rota (usa os vértices da geometria)
-    function nearestOnRouteDist(lon, lat) {
-      let min = Infinity;
-      const c = navRouteCoords;
-      for (let i = 0; i < c.length; i++) {
-        const d = hdist([lon, lat], c[i]);
-        if (d < min) min = d;
-        if (min < 20) break; // claramente na rota
+    // vértice mais próximo da rota: distância (m) + índice (progresso ao longo da rota)
+    function nearestIdx(coordsArr, lon, lat) {
+      let min = Infinity, idx = 0;
+      for (let i = 0; i < coordsArr.length; i++) {
+        const d = hdist([lon, lat], coordsArr[i]);
+        if (d < min) { min = d; idx = i; }
       }
-      return min;
+      return { dist: min, idx: idx };
+    }
+
+    // ---- Radares (dados do OpenStreetMap via Overpass) ----
+    async function fetchCameras(coords) {
+      navCameras = []; camAlerted = {};
+      try {
+        let minLat = 90, minLon = 180, maxLat = -90, maxLon = -180;
+        for (const c of coords) {
+          if (c[1] < minLat) minLat = c[1]; if (c[1] > maxLat) maxLat = c[1];
+          if (c[0] < minLon) minLon = c[0]; if (c[0] > maxLon) maxLon = c[0];
+        }
+        const p = 0.008;
+        const bbox = (minLat - p) + "," + (minLon - p) + "," + (maxLat + p) + "," + (maxLon + p);
+        const q = '[out:json][timeout:25];node["highway"="speed_camera"](' + bbox + ');out;';
+        const data = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q)).then(r => r.json());
+        const raw = (data.elements || []).map(e => ({
+          lat: e.lat, lon: e.lon, max: (e.tags && (e.tags.maxspeed || e.tags["maxspeed:forward"])) || ""
+        }));
+        let id = 0;
+        navCameras = raw.map(cam => {
+          const nr = nearestIdx(coords, cam.lon, cam.lat);
+          return { id: id++, lat: cam.lat, lon: cam.lon, max: cam.max, idx: nr.idx, distR: nr.dist };
+        }).filter(cam => cam.distR < 45); // só os radares que estão na nossa rota
+        if (glMap && glReady) setGLCameras();
+        else if (glMap) glPendingCameras = true;
+      } catch (e) {}
+    }
+    function setGLCameras() {
+      if (!glMap) return;
+      const fc = { type: "FeatureCollection", features: navCameras.map(c => ({
+        type: "Feature", geometry: { type: "Point", coordinates: [c.lon, c.lat] }, properties: {}
+      })) };
+      if (glMap.getSource("cameras")) { glMap.getSource("cameras").setData(fc); return; }
+      glMap.addSource("cameras", { type: "geojson", data: fc });
+      glMap.addLayer({
+        id: "cameras", type: "circle", source: "cameras",
+        paint: { "circle-radius": 7, "circle-color": "#f59e0b", "circle-stroke-color": "#fff", "circle-stroke-width": 2 }
+      });
+    }
+    function checkCameras(lon, lat, curIdx) {
+      for (const cam of navCameras) {
+        if (camAlerted[cam.id]) continue;
+        if (cam.idx < curIdx - 2) continue; // já ficou para trás
+        const d = hdist([lon, lat], [cam.lon, cam.lat]);
+        if (d < 320) {
+          camAlerted[cam.id] = true;
+          const lim = String(cam.max).replace(/[^0-9]/g, "");
+          speak("Atenção, radar." + (lim ? " Limite " + lim + " por hora." : ""));
+          showCam(lim, Math.round(d));
+        }
+      }
+    }
+    function showCam(limit, dist) {
+      const el = $("navCam");
+      el.textContent = "📷 Radar a " + dist + " m" + (limit ? " · " + limit + " km/h" : "");
+      el.hidden = false;
+      clearTimeout(el._t); el._t = setTimeout(() => { el.hidden = true; }, 8000);
     }
 
     // recalcula a rota da posição atual até o destino (quando saiu do caminho)
@@ -776,6 +843,7 @@
         navRouteCoords = r.geometry.coordinates;
         if (glMap && glReady) setGLRoute(navRouteCoords);
         else if (glMap) glPendingRoute = navRouteCoords;
+        fetchCameras(navRouteCoords);
         speak("Rota recalculada.");
       } catch (e) {
         navSetBanner(null, "Não consegui recalcular. Siga em direção ao destino.");
@@ -814,6 +882,8 @@
       navRouteCoords = rd.route.geometry.coordinates;
       navDest = navRouteCoords[navRouteCoords.length - 1];
       offCount = 0; rerouting = false;
+      $("navCam").hidden = true;
+      fetchCameras(navRouteCoords);
       document.body.classList.add("navigating");
       $("nav").hidden = false;
       $("navMute").textContent = navMuted ? "🔇" : "🔊";
@@ -867,11 +937,12 @@
 
       if (rerouting) return; // aguardando o recálculo terminar
 
-      // saiu da rota? (fora do caminho por 3 leituras seguidas → recalcula)
+      // progresso na rota + saiu da rota? (fora por 3 leituras seguidas → recalcula)
       if (navRouteCoords.length) {
-        const off = nearestOnRouteDist(lon, lat);
-        if (off > 55) { if (++offCount >= 3) { reroute(lat, lon); return; } }
+        const near = nearestIdx(navRouteCoords, lon, lat);
+        if (near.dist > 55) { if (++offCount >= 3) { reroute(lat, lon); return; } }
         else offCount = 0;
+        if (navCameras.length) checkCameras(lon, lat, near.idx);
       }
 
       let guard = 0;

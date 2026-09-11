@@ -19,7 +19,10 @@ const LIVE = [
   "nominatim.openstreetmap.org",
   "router.project-osrm.org",
   "api.open-meteo.com",
-  "tile.openstreetmap.org"
+  "tile.openstreetmap.org",
+  "api.mapbox.com",
+  "overpass-api.de",
+  "script.google.com"
 ];
 
 self.addEventListener("install", (e) => {
