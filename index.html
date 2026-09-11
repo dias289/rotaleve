@@ -201,6 +201,9 @@
     .nav-exit { right: 16px; left: auto; background: var(--bad); color: #2a0a0a; border-color: transparent; }
     body.navigating .sidebar { display: none; }
     body.navigating header { display: none; }
+    .nav-cursor { background: none; border: none; }
+    .nav-rot { width: 36px; height: 36px; transition: transform .3s ease-out; transform-origin: 50% 50%; }
+    .nav-rot svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
     .legend {
       display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
       font-size: 11px; color: var(--muted);
@@ -649,7 +652,25 @@
 
     // ---- Navegação por voz seguindo a rota ----
     let navWatch = null, navMarker = null, navSteps = [], navIndex = 0, navAnnounced = {};
-    let navMuted = false, wakeLock = null;
+    let navMuted = false, wakeLock = null, navLastPt = null, navZoomSet = false;
+
+    // direção (0-360) entre dois pontos [lon,lat]
+    function bearing(a, b) {
+      const toR = Math.PI / 180, toD = 180 / Math.PI;
+      const y = Math.sin((b[0] - a[0]) * toR) * Math.cos(b[1] * toR);
+      const x = Math.cos(a[1] * toR) * Math.sin(b[1] * toR) -
+        Math.sin(a[1] * toR) * Math.cos(b[1] * toR) * Math.cos((b[0] - a[0]) * toR);
+      return (Math.atan2(y, x) * toD + 360) % 360;
+    }
+    // ponto a `dist` metros à frente, na direção `brng` (para o carro ficar mais embaixo na tela)
+    function destPoint(lat, lon, brng, dist) {
+      const R = 6371000, br = brng * Math.PI / 180;
+      const lat1 = lat * Math.PI / 180, lon1 = lon * Math.PI / 180, dr = dist / R;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dr) + Math.cos(lat1) * Math.sin(dr) * Math.cos(br));
+      const lon2 = lon1 + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(lat1),
+        Math.cos(dr) - Math.sin(lat1) * Math.sin(lat2));
+      return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+    }
 
     function speak(text) {
       if (navMuted) return;
@@ -677,13 +698,23 @@
       navSteps = rd.steps
         .filter(s => s.maneuver && s.maneuver.location)
         .map(s => ({ instr: s.maneuver.instruction || "Siga em frente", loc: s.maneuver.location }));
-      navIndex = 0; navAnnounced = {};
+      navIndex = 0; navAnnounced = {}; navLastPt = null; navZoomSet = false;
       document.body.classList.add("navigating");
       $("nav").hidden = false;
       $("navMute").textContent = navMuted ? "🔇" : "🔊";
       setTimeout(() => map.invalidateSize(), 120);
       try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
-      if (!navMarker) navMarker = L.circleMarker([0, 0], { radius: 9, color: "#fff", weight: 3, fillColor: "#38bdf8", fillOpacity: 1 });
+      if (!navMarker) navMarker = L.marker([0, 0], {
+        icon: L.divIcon({
+          className: "nav-cursor",
+          html: '<div class="nav-rot"><svg width="36" height="36" viewBox="0 0 36 36">' +
+            '<circle cx="18" cy="18" r="16" fill="#38bdf8" opacity="0.25"/>' +
+            '<path d="M18 4 L28 30 L18 23 L8 30 Z" fill="#38bdf8" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>' +
+            '</svg></div>',
+          iconSize: [36, 36], iconAnchor: [18, 18]
+        }),
+        interactive: false, keyboard: false
+      });
       if (!navigator.geolocation) { navSetBanner(null, "GPS não disponível neste aparelho."); return; }
       navSetBanner(null, "Buscando sua posição…");
       speak("Navegação iniciada. Siga pela rota.");
@@ -693,9 +724,26 @@
 
     function onNavPos(pos) {
       const lat = pos.coords.latitude, lon = pos.coords.longitude;
+
+      // direção: usa a do GPS; se não tiver, calcula pelo deslocamento
+      let heading = (pos.coords.heading != null && !isNaN(pos.coords.heading)) ? pos.coords.heading : null;
+      if (heading == null && navLastPt) {
+        const moved = hdist(navLastPt, [lon, lat]);
+        if (moved > 3) heading = bearing(navLastPt, [lon, lat]);
+      }
+      navLastPt = [lon, lat];
+
       if (!navMarker._map) navMarker.addTo(map);
       navMarker.setLatLng([lat, lon]);
-      map.setView([lat, lon], Math.max(map.getZoom(), 16), { animate: true });
+      if (heading != null) {
+        const el = navMarker.getElement();
+        if (el) { const r = el.querySelector(".nav-rot"); if (r) r.style.transform = "rotate(" + heading + "deg)"; }
+      }
+
+      // segue o carro: aponta o centro um pouco à frente (carro fica mais embaixo na tela)
+      const center = (heading != null) ? destPoint(lat, lon, heading, 130) : [lat, lon];
+      if (!navZoomSet) { map.setView(center, 17); navZoomSet = true; }
+      else { map.panTo(center, { animate: true, duration: 0.9, easeLinearity: 0.4 }); }
 
       let guard = 0;
       while (navIndex < navSteps.length && guard++ < 12) {
