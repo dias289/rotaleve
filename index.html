@@ -661,6 +661,7 @@
     // ---- Navegação por voz seguindo a rota ----
     let navWatch = null, navMarker = null, navSteps = [], navIndex = 0, navAnnounced = {};
     let navMuted = false, wakeLock = null, navLastPt = null, navZoomSet = false;
+    let navDest = null, navRouteCoords = [], offCount = 0, rerouting = false;
 
     // direção (0-360) entre dois pontos [lon,lat]
     function bearing(a, b) {
@@ -747,6 +748,42 @@
       else { map.panTo(center, { animate: true, duration: 0.9, easeLinearity: 0.4 }); }
     }
 
+    // menor distância (m) da posição à linha da rota (usa os vértices da geometria)
+    function nearestOnRouteDist(lon, lat) {
+      let min = Infinity;
+      const c = navRouteCoords;
+      for (let i = 0; i < c.length; i++) {
+        const d = hdist([lon, lat], c[i]);
+        if (d < min) min = d;
+        if (min < 20) break; // claramente na rota
+      }
+      return min;
+    }
+
+    // recalcula a rota da posição atual até o destino (quando saiu do caminho)
+    async function reroute(lat, lon) {
+      if (rerouting || !navDest) return;
+      rerouting = true; offCount = 0;
+      navSetBanner(null, "Recalculando rota…");
+      speak("Recalculando rota.");
+      try {
+        const routes = await getRoutes({ lat: lat, lon: lon }, { lat: navDest[1], lon: navDest[0] });
+        const r = routes[0];
+        navSteps = ((r.legs && r.legs[0] && r.legs[0].steps) || [])
+          .filter(s => s.maneuver && s.maneuver.location)
+          .map(s => ({ instr: s.maneuver.instruction || "Siga em frente", loc: s.maneuver.location }));
+        navIndex = 0; navAnnounced = {};
+        navRouteCoords = r.geometry.coordinates;
+        if (glMap && glReady) setGLRoute(navRouteCoords);
+        else if (glMap) glPendingRoute = navRouteCoords;
+        speak("Rota recalculada.");
+      } catch (e) {
+        navSetBanner(null, "Não consegui recalcular. Siga em direção ao destino.");
+      } finally {
+        rerouting = false;
+      }
+    }
+
     function speak(text) {
       if (navMuted) return;
       try {
@@ -774,6 +811,9 @@
         .filter(s => s.maneuver && s.maneuver.location)
         .map(s => ({ instr: s.maneuver.instruction || "Siga em frente", loc: s.maneuver.location }));
       navIndex = 0; navAnnounced = {}; navLastPt = null; navZoomSet = false;
+      navRouteCoords = rd.route.geometry.coordinates;
+      navDest = navRouteCoords[navRouteCoords.length - 1];
+      offCount = 0; rerouting = false;
       document.body.classList.add("navigating");
       $("nav").hidden = false;
       $("navMute").textContent = navMuted ? "🔇" : "🔊";
@@ -824,6 +864,15 @@
       navLastPt = [lon, lat];
 
       navFollow(lat, lon, heading);
+
+      if (rerouting) return; // aguardando o recálculo terminar
+
+      // saiu da rota? (fora do caminho por 3 leituras seguidas → recalcula)
+      if (navRouteCoords.length) {
+        const off = nearestOnRouteDist(lon, lat);
+        if (off > 55) { if (++offCount >= 3) { reroute(lat, lon); return; } }
+        else offCount = 0;
+      }
 
       let guard = 0;
       while (navIndex < navSteps.length && guard++ < 12) {
