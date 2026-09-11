@@ -767,7 +767,8 @@
 
     if ($("lockBtn")) {
       $("lockBtn").addEventListener("click", async () => {
-        const key = ($("lockKey").value || "").trim();
+        // normaliza: sem espaços e em MAIÚSCULAS (igual ao que aparece na tela)
+        const key = ($("lockKey").value || "").trim().toUpperCase();
         if (!key) { showLock("Digite a chave.", true); return; }
         $("lockBtn").disabled = true;
         const st = $("lockStatus"); st.textContent = "Ativando…"; st.className = "lock-status";
