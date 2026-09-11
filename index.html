@@ -55,6 +55,21 @@
       background: var(--accent); color: #052e22; font-weight: 700; font-size: 13px; cursor: pointer;
     }
     .install-btn:hover { filter: brightness(1.05); }
+    .lock {
+      position: fixed; inset: 0; z-index: 9999; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .lock-card {
+      max-width: 340px; width: 100%; background: var(--panel);
+      border: 1px solid var(--line); border-radius: 16px; padding: 28px 22px; text-align: center;
+    }
+    .lock-icon { font-size: 40px; }
+    .lock-card h2 { margin: 8px 0 6px; font-size: 20px; }
+    .lock-card p { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0 0 16px; }
+    .lock-card input { text-align: center; letter-spacing: 1px; margin-bottom: 12px; text-transform: uppercase; }
+    .lock-status { font-size: 13px; margin-top: 12px; min-height: 18px; }
+    .lock-status.err { color: var(--bad); }
+    .lock-status.ok { color: var(--accent); }
     .layout { flex: 1; display: flex; min-height: 0; }
     .sidebar {
       width: 380px;
@@ -240,6 +255,17 @@
       </footer>
     </aside>
     <div id="map"></div>
+  </div>
+
+  <div id="lock" class="lock" hidden>
+    <div class="lock-card">
+      <div class="lock-icon">🔒</div>
+      <h2>Acesso ao RotaLeve</h2>
+      <p id="lockMsg">Digite sua chave de acesso para ativar este aparelho.</p>
+      <input type="text" id="lockKey" placeholder="Ex: TESTE-1234" autocomplete="off" />
+      <button id="lockBtn" class="go">Ativar aparelho</button>
+      <div id="lockStatus" class="lock-status"></div>
+    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -627,6 +653,97 @@
           console.warn("Falha ao registrar o service worker:", err));
       });
     }
+
+    // ---- Trava de acesso (licença por servidor) ----
+    // enabled:false = trava DESLIGADA (app funciona normalmente). Depois de publicar
+    // o servidor, trocamos para true e colamos a URL do servidor em endpoint.
+    const LICENSE = { enabled: false, endpoint: "" };
+
+    function deviceId() {
+      let id = null;
+      try { id = localStorage.getItem("rl_device"); } catch (e) {}
+      if (!id) {
+        id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+          : "d-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+        try { localStorage.setItem("rl_device", id); } catch (e) {}
+      }
+      return id;
+    }
+    function lockStore(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+    function lockGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+    // chamada ao servidor via JSONP (evita problemas de CORS)
+    function jsonp(params) {
+      return new Promise((resolve, reject) => {
+        const cb = "rlcb_" + Math.random().toString(36).slice(2);
+        const s = document.createElement("script");
+        const q = Object.keys(params).map(k => encodeURIComponent(k) + "=" + encodeURIComponent(params[k])).join("&");
+        let done = false;
+        const cleanup = () => { try { delete window[cb]; } catch (e) { window[cb] = undefined; } if (s.parentNode) s.remove(); };
+        window[cb] = (data) => { done = true; cleanup(); resolve(data); };
+        s.onerror = () => { if (!done) { cleanup(); reject(new Error("rede")); } };
+        s.src = LICENSE.endpoint + (LICENSE.endpoint.indexOf("?") >= 0 ? "&" : "?") + q + "&callback=" + cb;
+        document.body.appendChild(s);
+        setTimeout(() => { if (!done) { cleanup(); reject(new Error("timeout")); } }, 12000);
+      });
+    }
+    async function licenseActivate(key) {
+      return jsonp({ action: "activate", key: key, device: deviceId(), ua: (navigator.userAgent || "").slice(0, 120) });
+    }
+    async function licenseCheck(token) {
+      return jsonp({ action: "check", device: deviceId(), token: token || "" });
+    }
+
+    function showLock(msg, isErr) {
+      $("lock").hidden = false;
+      if (msg) { const st = $("lockStatus"); st.textContent = msg; st.className = "lock-status" + (isErr ? " err" : ""); }
+    }
+    function hideLock() { $("lock").hidden = true; }
+
+    async function licenseGate() {
+      if (!LICENSE.enabled || !LICENSE.endpoint) return true; // trava desligada
+      const token = lockGet("rl_token");
+      if (token) {
+        try {
+          const r = await licenseCheck(token);
+          if (r && r.ok) { lockStore("rl_lastok", String(Date.now())); return true; }
+          if (r && r.blocked) { lockStore("rl_token", null); }
+        } catch (e) {
+          // sem internet: tolera até 7 dias desde a última verificação bem-sucedida
+          const last = Number(lockGet("rl_lastok") || 0);
+          if (Date.now() - last < 7 * 24 * 3600 * 1000) return true;
+        }
+      }
+      showLock();
+      return false;
+    }
+
+    if ($("lockBtn")) {
+      $("lockBtn").addEventListener("click", async () => {
+        const key = ($("lockKey").value || "").trim();
+        if (!key) { showLock("Digite a chave.", true); return; }
+        $("lockBtn").disabled = true;
+        const st = $("lockStatus"); st.textContent = "Ativando…"; st.className = "lock-status";
+        try {
+          const r = await licenseActivate(key);
+          if (r && r.ok) {
+            lockStore("rl_token", r.token || "1");
+            lockStore("rl_lastok", String(Date.now()));
+            st.textContent = "✅ Ativado!"; st.className = "lock-status ok";
+            setTimeout(hideLock, 600);
+          } else {
+            st.textContent = "⚠️ " + ((r && r.reason) || "chave inválida"); st.className = "lock-status err";
+          }
+        } catch (e) {
+          st.textContent = "⚠️ Sem conexão com o servidor."; st.className = "lock-status err";
+        } finally {
+          $("lockBtn").disabled = false;
+        }
+      });
+      $("lockKey").addEventListener("keydown", (e) => { if (e.key === "Enter") $("lockBtn").click(); });
+    }
+
+    licenseGate();
   })();
   </script>
 </body>

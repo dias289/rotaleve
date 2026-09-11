@@ -1,5 +1,5 @@
 // Service worker do RotaLeve — faz o app abrir rápido e a interface funcionar offline.
-const CACHE = "rotaleve-v1";
+const CACHE = "rotaleve-v2";
 
 // Arquivos da "casca" do app (a interface). NÃO inclui as APIs de rota/altitude,
 // que sempre precisam de internet.
@@ -44,7 +44,24 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (LIVE.some((h) => url.hostname.includes(h))) return; // rede direta
 
-  // Casca do app: responde do cache primeiro; se não tiver, busca na rede e guarda.
+  // A PÁGINA (index.html / navegação): rede primeiro, para sempre pegar a versão
+  // mais nova; cache só como reserva quando estiver offline.
+  const isDoc = req.mode === "navigate" ||
+    url.pathname.endsWith("/") || url.pathname.endsWith("index.html");
+  if (isDoc) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      }).catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
+    );
+    return;
+  }
+
+  // Demais arquivos da casca (ícones, Leaflet): cache primeiro (mudam pouco).
   e.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
