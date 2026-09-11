@@ -175,6 +175,32 @@
     .profile svg { width: 100%; height: 60px; display: block; }
     footer { font-size: 11px; color: var(--muted); line-height: 1.5; border-top: 1px solid var(--line); padding-top: 10px; }
     .leaflet-container { background: #0b1218; }
+    /* ---- Navegação ---- */
+    .nav-btn {
+      width: 100%; margin-top: 10px; padding: 11px; border: none; border-radius: 10px;
+      background: var(--accent-2); color: #04222e; font-weight: 700; font-size: 14px; cursor: pointer;
+    }
+    .route-card.best .nav-btn { background: var(--accent); }
+    .nav-btn:hover { filter: brightness(1.05); }
+    .nav { position: fixed; inset: 0; z-index: 8000; pointer-events: none; }
+    .nav[hidden] { display: none !important; }
+    .nav-top {
+      position: absolute; top: 12px; left: 12px; right: 12px; pointer-events: auto;
+      background: var(--accent); color: #04241b; border-radius: 16px; padding: 14px 18px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.4);
+    }
+    .nav-dist { font-size: 24px; font-weight: 800; line-height: 1.1; }
+    .nav-instr { font-size: 16px; font-weight: 600; margin-top: 2px; }
+    .nav-round {
+      position: absolute; bottom: 22px; pointer-events: auto; border: none; cursor: pointer;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 999px; padding: 12px 16px; font-size: 15px; font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0,0,0,.4);
+    }
+    .nav-round[title] { left: 16px; }
+    .nav-exit { right: 16px; left: auto; background: var(--bad); color: #2a0a0a; border-color: transparent; }
+    body.navigating .sidebar { display: none; }
+    body.navigating header { display: none; }
     .legend {
       display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
       font-size: 11px; color: var(--muted);
@@ -263,6 +289,15 @@
     <div id="map"></div>
   </div>
 
+  <div id="nav" class="nav" hidden>
+    <div class="nav-top">
+      <div class="nav-dist" id="navDist">—</div>
+      <div class="nav-instr" id="navInstr">Iniciando navegação…</div>
+    </div>
+    <button id="navMute" class="nav-round" title="Voz">🔊</button>
+    <button id="navExit" class="nav-round nav-exit">✕ Sair</button>
+  </div>
+
   <div id="lock" class="lock" hidden>
     <div class="lock-card">
       <div class="lock-icon">🔒</div>
@@ -343,7 +378,7 @@
       // Com token do Mapbox: rotas com TRÂNSITO REAL (perfil driving-traffic).
       if (MAPBOX.token) {
         const url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" + coords +
-          "?alternatives=true&geometries=geojson&overview=full&steps=false&access_token=" +
+          "?alternatives=true&geometries=geojson&overview=full&steps=true&language=pt&access_token=" +
           encodeURIComponent(MAPBOX.token);
         const r = await fetch(url);
         const data = await r.json();
@@ -354,7 +389,7 @@
 
       // Sem token: OSRM grátis (sem trânsito real; usamos a simulação).
       const url = "https://router.project-osrm.org/route/v1/driving/" + coords +
-        "?alternatives=true&overview=full&geometries=geojson";
+        "?alternatives=true&overview=full&geometries=geojson&steps=true";
       const r = await fetch(url);
       const data = await r.json();
       if (data.code !== "Ok" || !data.routes || !data.routes.length)
@@ -555,8 +590,11 @@
             '<div class="metric"><div class="v">' + fmtKm(rd.route.distance) + '<small> km</small></div><div class="k">distância</div></div>' +
             '<div class="metric"><div class="v">' + fmtMin(rd.duration) + '<small> min</small></div><div class="k">' + timeLabel + '</div></div>' +
           '</div>' +
-          '<div class="profile">' + profileSvg(rd.elevs, color) + '</div>';
+          '<div class="profile">' + profileSvg(rd.elevs, color) + '</div>' +
+          '<button class="nav-btn" data-idx="' + i + '">🧭 Navegar por esta rota</button>';
         card.addEventListener("click", () => highlight(i));
+        const nb = card.querySelector(".nav-btn");
+        if (nb) nb.addEventListener("click", (e) => { e.stopPropagation(); startNav(i); });
         routesEl.appendChild(card);
       });
 
@@ -609,6 +647,91 @@
       if (routeData.length && lastA && lastB) render(lastA, lastB, false);
     }
 
+    // ---- Navegação por voz seguindo a rota ----
+    let navWatch = null, navMarker = null, navSteps = [], navIndex = 0, navAnnounced = {};
+    let navMuted = false, wakeLock = null;
+
+    function speak(text) {
+      if (navMuted) return;
+      try {
+        if (!("speechSynthesis" in window)) return;
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "pt-BR"; u.rate = 1;
+        speechSynthesis.cancel();
+        speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+
+    function navSetBanner(distMeters, instr) {
+      $("navDist").textContent = (distMeters == null) ? "" :
+        (distMeters >= 1000 ? (distMeters / 1000).toFixed(1) + " km" : Math.round(distMeters) + " m");
+      $("navInstr").textContent = instr || "";
+    }
+
+    async function startNav(idx) {
+      const rd = routeData[idx];
+      if (!rd || !rd.steps || !rd.steps.length) {
+        alert("Esta rota não tem instruções de navegação disponíveis.");
+        return;
+      }
+      navSteps = rd.steps
+        .filter(s => s.maneuver && s.maneuver.location)
+        .map(s => ({ instr: s.maneuver.instruction || "Siga em frente", loc: s.maneuver.location }));
+      navIndex = 0; navAnnounced = {};
+      document.body.classList.add("navigating");
+      $("nav").hidden = false;
+      $("navMute").textContent = navMuted ? "🔇" : "🔊";
+      setTimeout(() => map.invalidateSize(), 120);
+      try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+      if (!navMarker) navMarker = L.circleMarker([0, 0], { radius: 9, color: "#fff", weight: 3, fillColor: "#38bdf8", fillOpacity: 1 });
+      if (!navigator.geolocation) { navSetBanner(null, "GPS não disponível neste aparelho."); return; }
+      navSetBanner(null, "Buscando sua posição…");
+      speak("Navegação iniciada. Siga pela rota.");
+      navWatch = navigator.geolocation.watchPosition(onNavPos, onNavErr,
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+    }
+
+    function onNavPos(pos) {
+      const lat = pos.coords.latitude, lon = pos.coords.longitude;
+      if (!navMarker._map) navMarker.addTo(map);
+      navMarker.setLatLng([lat, lon]);
+      map.setView([lat, lon], Math.max(map.getZoom(), 16), { animate: true });
+
+      let guard = 0;
+      while (navIndex < navSteps.length && guard++ < 12) {
+        const st = navSteps[navIndex];
+        const d = hdist([lon, lat], st.loc);
+        if (d < 35) { speak(st.instr); navIndex++; continue; }
+        navSetBanner(d, st.instr);
+        if (d < 250 && !navAnnounced[navIndex]) {
+          speak("Em " + (Math.round(d / 10) * 10) + " metros, " + st.instr);
+          navAnnounced[navIndex] = true;
+        }
+        break;
+      }
+      if (navIndex >= navSteps.length) {
+        navSetBanner(null, "Você chegou ao destino. 🎉");
+        speak("Você chegou ao destino.");
+        stopNav();
+      }
+    }
+
+    function onNavErr(err) {
+      navSetBanner(null, (err && err.code === 1)
+        ? "Permita o acesso à localização para navegar."
+        : "Não consegui obter sua localização.");
+    }
+
+    function stopNav() {
+      if (navWatch != null) { try { navigator.geolocation.clearWatch(navWatch); } catch (e) {} navWatch = null; }
+      if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+      try { speechSynthesis.cancel(); } catch (e) {}
+      if (navMarker && navMarker._map) map.removeLayer(navMarker);
+      document.body.classList.remove("navigating");
+      $("nav").hidden = true;
+      setTimeout(() => map.invalidateSize(), 120);
+    }
+
     async function run() {
       const o = $("orig").value.trim();
       const d = $("dest").value.trim();
@@ -636,7 +759,8 @@
         for (const route of routes) {
           const pts = sample(route.geometry.coordinates, 100);
           const elevs = await getElevations(pts);
-          routeData.push({ route, elevs, pts, climb: climbFrom(elevs) });
+          const steps = (route.legs && route.legs[0] && route.legs[0].steps) ? route.legs[0].steps : [];
+          routeData.push({ route, elevs, pts, steps, climb: climbFrom(elevs) });
           await new Promise(r => setTimeout(r, 300));
         }
         render(a, b);
@@ -649,6 +773,12 @@
 
     $("go").addEventListener("click", run);
     $("dest").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+    $("navExit").addEventListener("click", () => stopNav());
+    $("navMute").addEventListener("click", () => {
+      navMuted = !navMuted;
+      $("navMute").textContent = navMuted ? "🔇" : "🔊";
+      if (navMuted) { try { speechSynthesis.cancel(); } catch (e) {} }
+    });
     $("kmL").addEventListener("input", recompute);
     $("price").addEventListener("input", recompute);
     $("trips").addEventListener("input", recompute);
