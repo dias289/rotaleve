@@ -16,6 +16,11 @@
  *  - "aparelhos": device_id | chave | status(ativo/bloqueado) | token | ativado_em | ultimo_acesso | aparelho
  */
 
+// Token do Mapbox (trânsito real). Fica AQUI no servidor (não no código público do app).
+// Só é entregue a aparelhos já ativados por uma chave válida.
+// >>> Substitua o texto abaixo pelo seu token do Mapbox (começa com "pk."). <<<
+var MAPBOX_TOKEN = 'COLE_SEU_TOKEN_DO_MAPBOX_AQUI';
+
 function primeiroUso() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var chaves = ss.getSheetByName('chaves') || ss.insertSheet('chaves');
@@ -57,6 +62,7 @@ function processar(p) {
   var acao = p.action || '';
   if (acao === 'activate') return ativar(p.key, p.device, p.ua);
   if (acao === 'check') return verificar(p.device, p.token);
+  if (acao === 'mapbox') return darMapbox(p.device, p.token);
   if (acao === 'ping') return { ok: true, msg: 'servidor RotaLeve no ar' };
   return { ok: false, reason: 'ação desconhecida' };
 }
@@ -104,6 +110,13 @@ function ativar(chave, device, ua) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Entrega o token do Mapbox apenas se o aparelho estiver autorizado.
+function darMapbox(device, token) {
+  var v = verificar(device, token);
+  if (v && v.ok) return { ok: true, mb: MAPBOX_TOKEN };
+  return v; // repassa o motivo (aparelho bloqueado / não ativado)
 }
 
 function verificar(device, token) {

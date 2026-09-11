@@ -278,6 +278,7 @@
     const COLORS = ["#34d399", "#38bdf8", "#f472b6", "#fbbf24"];
     // Mapbox: trânsito real. Com token preenchido, usa Mapbox (trânsito ao vivo);
     // vazio = usa OSRM grátis + trânsito simulado (o app funciona nos dois casos).
+    // O token NÃO fica aqui (código público). É buscado no servidor após ativar a chave.
     const MAPBOX = { token: "" };
     const map = L.map("map", { zoomControl: true }).setView([-15.78, -47.93], 5);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -654,13 +655,22 @@
       run();
     }));
 
-    // Mapbox ligado: troca o seletor simulado por selo de trânsito real e ajusta créditos.
-    if (MAPBOX.token) {
+    // Quando o token do Mapbox chega (do servidor), troca o seletor simulado pelo
+    // selo de trânsito real e ajusta os créditos.
+    function applyMapboxUI() {
       const tf = document.getElementById("trafficField");
       if (tf) tf.innerHTML = '<label>Trânsito</label>' +
         '<div class="realtraffic">🚦 Trânsito real (ao vivo) via Mapbox — já considerado no cálculo</div>';
       const cr = document.getElementById("credits");
       if (cr) cr.textContent = "Dados: mapa OpenStreetMap · rotas e trânsito © Mapbox · altitude Open-Meteo.";
+    }
+    // Busca o token do Mapbox no servidor (só devolve para aparelhos ativados).
+    async function loadMapboxToken() {
+      if (!LICENSE.enabled || !LICENSE.endpoint) return;
+      try {
+        const r = await jsonp({ action: "mapbox", device: deviceId(), token: lockGet("rl_token") || "" });
+        if (r && r.ok && r.mb) { MAPBOX.token = r.mb; applyMapboxUI(); }
+      } catch (e) { /* sem token: segue com o trânsito simulado */ }
     }
 
     // ---- PWA: instalação e service worker ----
@@ -763,6 +773,7 @@
             lockStore("rl_lastok", String(Date.now()));
             st.textContent = "✅ Ativado!"; st.className = "lock-status ok";
             setTimeout(hideLock, 600);
+            loadMapboxToken();
           } else {
             st.textContent = "⚠️ " + ((r && r.reason) || "chave inválida"); st.className = "lock-status err";
           }
@@ -775,7 +786,7 @@
       $("lockKey").addEventListener("keydown", (e) => { if (e.key === "Enter") $("lockBtn").click(); });
     }
 
-    licenseGate();
+    licenseGate().then((ok) => { if (ok) loadMapboxToken(); });
   })();
   </script>
 </body>
