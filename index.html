@@ -59,6 +59,8 @@
       position: fixed; inset: 0; z-index: 9999; background: var(--bg);
       display: flex; align-items: center; justify-content: center; padding: 20px;
     }
+    /* garante que esconder (hidden) vença o display:flex acima */
+    .lock[hidden] { display: none !important; }
     .lock-card {
       max-width: 340px; width: 100%; background: var(--panel);
       border: 1px solid var(--line); border-radius: 16px; padding: 28px 22px; text-align: center;
