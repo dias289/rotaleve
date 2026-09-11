@@ -697,9 +697,17 @@
     window.addEventListener("appinstalled", () => { $("install").hidden = true; });
 
     if ("serviceWorker" in navigator) {
+      // recarrega automaticamente quando uma versão nova do app assume o controle
+      let atualizando = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (atualizando) return;
+        atualizando = true;
+        location.reload();
+      });
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").catch((err) =>
-          console.warn("Falha ao registrar o service worker:", err));
+        navigator.serviceWorker.register("sw.js")
+          .then((reg) => { try { reg.update(); } catch (e) {} })
+          .catch((err) => console.warn("Falha ao registrar o service worker:", err));
       });
     }
 
