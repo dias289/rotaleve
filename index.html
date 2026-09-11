@@ -123,6 +123,10 @@
       cursor: pointer;
     }
     .chip:hover { border-color: var(--accent-2); }
+    .realtraffic {
+      font-size: 13px; color: var(--accent); background: var(--panel-2);
+      border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; line-height: 1.4;
+    }
     .status { font-size: 13px; color: var(--accent-2); min-height: 18px; }
     .status.err { color: var(--bad); }
     .routes { display: flex; flex-direction: column; gap: 10px; }
@@ -228,7 +232,7 @@
           <label for="trips">Quantas vezes você faz essa rota por semana?</label>
           <input type="text" id="trips" value="10" inputmode="numeric" />
         </div>
-        <div class="field">
+        <div class="field" id="trafficField">
           <label for="traffic">Trânsito no horário</label>
           <select id="traffic">
             <option value="0">Livre (madrugada / fim de semana)</option>
@@ -249,7 +253,7 @@
       <div id="legend"></div>
       <div class="routes" id="routes"></div>
       <footer>
-        Dados: mapa OpenStreetMap · rotas OSRM · altitude Open-Meteo. <br />
+        <span id="credits">Dados: mapa OpenStreetMap · rotas OSRM · altitude Open-Meteo.</span> <br />
         "Subida total" = soma de todos os trechos em que a rota ganha altitude.
         É o melhor termômetro simples de consumo em cidades com ladeiras.
       </footer>
@@ -272,6 +276,9 @@
   <script>
   (function () {
     const COLORS = ["#34d399", "#38bdf8", "#f472b6", "#fbbf24"];
+    // Mapbox: trânsito real. Com token preenchido, usa Mapbox (trânsito ao vivo);
+    // vazio = usa OSRM grátis + trânsito simulado (o app funciona nos dois casos).
+    const MAPBOX = { token: "" };
     const map = L.map("map", { zoomControl: true }).setView([-15.78, -47.93], 5);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -324,6 +331,20 @@
 
     async function getRoutes(a, b) {
       const coords = a.lon + "," + a.lat + ";" + b.lon + "," + b.lat;
+
+      // Com token do Mapbox: rotas com TRÂNSITO REAL (perfil driving-traffic).
+      if (MAPBOX.token) {
+        const url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" + coords +
+          "?alternatives=true&geometries=geojson&overview=full&steps=false&access_token=" +
+          encodeURIComponent(MAPBOX.token);
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!data.routes || !data.routes.length)
+          throw new Error((data && data.message) || "Não consegui calcular rotas (Mapbox).");
+        return data.routes; // mesmo formato: { geometry.coordinates, distance, duration }
+      }
+
+      // Sem token: OSRM grátis (sem trânsito real; usamos a simulação).
       const url = "https://router.project-osrm.org/route/v1/driving/" + coords +
         "?alternatives=true&overview=full&geometries=geojson";
       const r = await fetch(url);
@@ -473,7 +494,8 @@
       markers.push(L.marker([a.lat, a.lon]).addTo(map).bindPopup("Origem"));
       markers.push(L.marker([b.lat, b.lon]).addTo(map).bindPopup("Destino"));
 
-      const level = trafficLevel();
+      // Com Mapbox, a duração já inclui o trânsito real → não aplica a simulação (level 0).
+      const level = MAPBOX.token ? 0 : trafficLevel();
       const { kmL, price } = carParams();
       routeData.forEach(rd => {
         const urban = urbanFactor(rd.route);
@@ -492,7 +514,8 @@
         r.liters < routeData[best].liters ? i : best, 0);
       const fastIdx = routeData.reduce((f, r, i) =>
         r.duration < routeData[f].duration ? i : f, 0);
-      const timeLabel = level > 0 ? "tempo c/ trânsito" : "tempo est.";
+      const timeLabel = MAPBOX.token ? "tempo c/ trânsito real"
+        : (level > 0 ? "tempo c/ trânsito" : "tempo est.");
 
       const allLatLngs = [];
       routeData.forEach((rd, i) => {
@@ -630,6 +653,15 @@
       $("dest").value = c.getAttribute("data-d");
       run();
     }));
+
+    // Mapbox ligado: troca o seletor simulado por selo de trânsito real e ajusta créditos.
+    if (MAPBOX.token) {
+      const tf = document.getElementById("trafficField");
+      if (tf) tf.innerHTML = '<label>Trânsito</label>' +
+        '<div class="realtraffic">🚦 Trânsito real (ao vivo) via Mapbox — já considerado no cálculo</div>';
+      const cr = document.getElementById("credits");
+      if (cr) cr.textContent = "Dados: mapa OpenStreetMap · rotas e trânsito © Mapbox · altitude Open-Meteo.";
+    }
 
     // ---- PWA: instalação e service worker ----
     let deferredPrompt = null;
