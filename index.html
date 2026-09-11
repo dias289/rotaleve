@@ -14,6 +14,7 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" href="icons/favicon-64.png" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" />
   <style>
     :root {
       --bg: #0f1720;
@@ -204,6 +205,10 @@
     .nav-cursor { background: none; border: none; }
     .nav-rot { width: 36px; height: 36px; transition: transform .3s ease-out; transform-origin: 50% 50%; }
     .nav-rot svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+    #navMap { position: fixed; inset: 0; z-index: 7000; background: #0b1218; }
+    #navMap[hidden] { display: none !important; }
+    .gl-cursor svg { display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+    .maplibregl-ctrl-attrib { font-size: 10px; }
     .legend {
       display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
       font-size: 11px; color: var(--muted);
@@ -292,6 +297,8 @@
     <div id="map"></div>
   </div>
 
+  <div id="navMap" hidden></div>
+
   <div id="nav" class="nav" hidden>
     <div class="nav-top">
       <div class="nav-dist" id="navDist">—</div>
@@ -313,6 +320,7 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
   <script>
   (function () {
     const COLORS = ["#34d399", "#38bdf8", "#f472b6", "#fbbf24"];
@@ -672,6 +680,73 @@
       return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
     }
 
+    // ---- Mapa imersivo (MapLibre): gira junto com o trajeto (heading-up) + 3D ----
+    let glMap = null, glMarker = null, glReady = false, glPendingRoute = null;
+    function glAvailable() { return typeof maplibregl !== "undefined"; }
+    const OSM_STYLE = {
+      version: 8,
+      sources: {
+        osm: {
+          type: "raster", tileSize: 256,
+          tiles: [
+            "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          ],
+          attribution: "© OpenStreetMap"
+        }
+      },
+      layers: [{ id: "osm", type: "raster", source: "osm" }]
+    };
+    function initGLNav() {
+      if (glMap || !glAvailable()) return;
+      try {
+        glMap = new maplibregl.Map({
+          container: "navMap", style: OSM_STYLE,
+          center: [-46.63, -23.55], zoom: 16, pitch: 55, bearing: 0,
+          attributionControl: { compact: true }, interactive: false
+        });
+        const elm = document.createElement("div");
+        elm.className = "gl-cursor";
+        elm.innerHTML = '<svg width="40" height="40" viewBox="0 0 36 36">' +
+          '<circle cx="18" cy="18" r="16" fill="#38bdf8" opacity="0.25"/>' +
+          '<path d="M18 3 L29 31 L18 24 L7 31 Z" fill="#38bdf8" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+        glMarker = new maplibregl.Marker({ element: elm });
+        glMap.on("load", () => { glReady = true; if (glPendingRoute) { setGLRoute(glPendingRoute); glPendingRoute = null; } });
+      } catch (e) { glMap = null; glMarker = null; } // sem WebGL → cai no mapa Leaflet
+    }
+    function setGLRoute(coords) {
+      const data = { type: "Feature", geometry: { type: "LineString", coordinates: coords } };
+      if (glMap.getSource("route")) { glMap.getSource("route").setData(data); return; }
+      glMap.addSource("route", { type: "geojson", data: data });
+      glMap.addLayer({
+        id: "route", type: "line", source: "route",
+        paint: { "line-color": "#34d399", "line-width": 8, "line-opacity": 0.9 },
+        layout: { "line-cap": "round", "line-join": "round" }
+      });
+    }
+    // segue o veículo: no MapLibre gira o mapa (rua sempre pra cima); senão, mapa Leaflet fixo com seta girando
+    function navFollow(lat, lon, heading) {
+      if (glMap) {
+        glMarker.setLngLat([lon, lat]);
+        glMap.easeTo({
+          center: [lon, lat], zoom: 17, pitch: 55,
+          bearing: (heading != null ? heading : glMap.getBearing()),
+          duration: 800, offset: [0, 110]
+        });
+        return;
+      }
+      if (!navMarker._map) navMarker.addTo(map);
+      navMarker.setLatLng([lat, lon]);
+      if (heading != null) {
+        const el = navMarker.getElement();
+        if (el) { const r = el.querySelector(".nav-rot"); if (r) r.style.transform = "rotate(" + heading + "deg)"; }
+      }
+      const center = (heading != null) ? destPoint(lat, lon, heading, 130) : [lat, lon];
+      if (!navZoomSet) { map.setView(center, 17); navZoomSet = true; }
+      else { map.panTo(center, { animate: true, duration: 0.9, easeLinearity: 0.4 }); }
+    }
+
     function speak(text) {
       if (navMuted) return;
       try {
@@ -704,6 +779,21 @@
       $("navMute").textContent = navMuted ? "🔇" : "🔊";
       setTimeout(() => map.invalidateSize(), 120);
       try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+
+      // mapa imersivo (gira junto). Se o MapLibre não estiver disponível, usa o mapa Leaflet com seta.
+      if (glAvailable()) {
+        $("navMap").hidden = false;
+        initGLNav();
+        if (glMap) {
+          setTimeout(() => { try { glMap.resize(); } catch (e) {} }, 60);
+          const coords = rd.route.geometry.coordinates;
+          if (glReady) setGLRoute(coords); else glPendingRoute = coords;
+          if (glMarker) glMarker.setLngLat(coords[0]).addTo(glMap);
+        } else {
+          $("navMap").hidden = true; // WebGL indisponível → usa o mapa com seta
+        }
+      }
+
       if (!navMarker) navMarker = L.marker([0, 0], {
         icon: L.divIcon({
           className: "nav-cursor",
@@ -733,17 +823,7 @@
       }
       navLastPt = [lon, lat];
 
-      if (!navMarker._map) navMarker.addTo(map);
-      navMarker.setLatLng([lat, lon]);
-      if (heading != null) {
-        const el = navMarker.getElement();
-        if (el) { const r = el.querySelector(".nav-rot"); if (r) r.style.transform = "rotate(" + heading + "deg)"; }
-      }
-
-      // segue o carro: aponta o centro um pouco à frente (carro fica mais embaixo na tela)
-      const center = (heading != null) ? destPoint(lat, lon, heading, 130) : [lat, lon];
-      if (!navZoomSet) { map.setView(center, 17); navZoomSet = true; }
-      else { map.panTo(center, { animate: true, duration: 0.9, easeLinearity: 0.4 }); }
+      navFollow(lat, lon, heading);
 
       let guard = 0;
       while (navIndex < navSteps.length && guard++ < 12) {
@@ -775,6 +855,8 @@
       if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
       try { speechSynthesis.cancel(); } catch (e) {}
       if (navMarker && navMarker._map) map.removeLayer(navMarker);
+      if (glMarker) { try { glMarker.remove(); } catch (e) {} }
+      $("navMap").hidden = true;
       document.body.classList.remove("navigating");
       $("nav").hidden = true;
       setTimeout(() => map.invalidateSize(), 120);
