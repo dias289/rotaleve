@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>RotaLeve — Rota econômica</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0f1720" />
+  <meta name="description" content="GPS que escolhe a rota mais econômica de combustível, considerando as ladeiras da cidade." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RotaLeve" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icons/favicon-64.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    :root {
+      --bg: #0f1720;
+      --panel: #17212b;
+      --panel-2: #1d2b38;
+      --line: #2b3b4a;
+      --text: #e7eef5;
+      --muted: #8ea0b0;
+      --accent: #34d399;
+      --accent-2: #38bdf8;
+      --warn: #fbbf24;
+      --bad: #f87171;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      padding: 14px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+    header h1 span { color: var(--accent); }
+    header .tag { font-size: 12px; color: var(--muted); }
+    .install-btn {
+      margin-left: auto; padding: 8px 14px; border: none; border-radius: 999px;
+      background: var(--accent); color: #052e22; font-weight: 700; font-size: 13px; cursor: pointer;
+    }
+    .install-btn:hover { filter: brightness(1.05); }
+    .layout { flex: 1; display: flex; min-height: 0; }
+    .sidebar {
+      width: 380px;
+      max-width: 42vw;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    #map { flex: 1; min-width: 0; background: #0b1218; }
+    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+    input[type=text], select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 14px;
+    }
+    input[type=text]:focus, select:focus { outline: none; border-color: var(--accent-2); }
+    .field { margin-bottom: 10px; }
+    .car { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .car .field { margin-bottom: 4px; }
+    button.go {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #10b981);
+      color: #052e22;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button.go:disabled { opacity: .55; cursor: default; }
+    .hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .linkbtn {
+      background: none; border: none; color: var(--accent-2);
+      font-size: 12px; cursor: pointer; padding: 4px 0 0; text-align: left;
+    }
+    .linkbtn:hover { text-decoration: underline; }
+    .examples { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
+    .ex-label { font-size: 11px; color: var(--muted); width: 100%; }
+    .chip {
+      font-size: 12px; padding: 6px 10px; border-radius: 999px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+      cursor: pointer;
+    }
+    .chip:hover { border-color: var(--accent-2); }
+    .status { font-size: 13px; color: var(--accent-2); min-height: 18px; }
+    .status.err { color: var(--bad); }
+    .routes { display: flex; flex-direction: column; gap: 10px; }
+    .route-card {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 12px;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .route-card:hover { border-color: var(--accent-2); }
+    .route-card.best { border-color: var(--accent); background: #14332a; }
+    .route-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .route-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .badge {
+      font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+      background: var(--accent); color: #052e22;
+    }
+    .metrics { display: flex; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+    .metric .v { font-size: 18px; font-weight: 700; }
+    .metric .v small { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .metric .k { font-size: 11px; color: var(--muted); }
+    .metric.climb .v { color: var(--warn); }
+    .metric.fuel .v { color: var(--accent); }
+    .metric.co2 .v { color: #9ca3af; }
+    .tag-fast {
+      font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
+      background: var(--accent-2); color: #04222e; margin-left: 6px;
+    }
+    .summary {
+      border: 1px solid var(--accent);
+      background: linear-gradient(135deg, #103a2c, #0f2c33);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .summary h3 { margin: 0 0 4px; font-size: 13px; color: var(--accent); }
+    .summary .lead { font-size: 13px; line-height: 1.5; }
+    .summary .big { font-size: 26px; font-weight: 800; color: var(--accent); margin: 8px 0 2px; }
+    .summary .sub { font-size: 12px; color: var(--muted); }
+    .summary .perTrip { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .profile { margin-top: 10px; }
+    .profile svg { width: 100%; height: 60px; display: block; }
+    footer { font-size: 11px; color: var(--muted); line-height: 1.5; border-top: 1px solid var(--line); padding-top: 10px; }
+    .leaflet-container { background: #0b1218; }
+    .legend {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+      font-size: 11px; color: var(--muted);
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 10px; margin-bottom: 4px;
+    }
+    .legend-title { width: 100%; margin-bottom: 2px; }
+    .legend .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-left: 4px; }
+
+    /* ---- Layout de celular ---- */
+    @media (max-width: 600px) {
+      header { padding: 12px 14px; }
+      header .tag { display: none; }
+      .layout { flex-direction: column; }
+      #map { order: -1; height: 42vh; min-height: 220px; flex: none; }
+      .sidebar {
+        width: 100%; max-width: none; flex: 1 1 auto; min-height: 0;
+        border-right: none; border-top: 1px solid var(--line);
+        border-radius: 16px 16px 0 0; margin-top: -16px; z-index: 500; position: relative;
+      }
+      .car { grid-template-columns: 1fr 1fr; }
+      input[type=text] { font-size: 16px; } /* evita zoom automático no iOS */
+      .go, .chip, .linkbtn { min-height: 40px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Rota<span>Leve</span></h1>
+    <span class="tag">Protótipo · compara rotas pela quantidade de subida (menos subida = menos combustível)</span>
+    <button id="install" class="install-btn" hidden>📲 Instalar app</button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div>
+        <div class="field">
+          <label for="orig">Origem</label>
+          <input type="text" id="orig" placeholder="Ex: Praça Central, sua cidade" />
+          <button type="button" id="geo" class="linkbtn">📍 Usar minha localização</button>
+        </div>
+        <div class="field">
+          <label for="dest">Destino</label>
+          <input type="text" id="dest" placeholder="Ex: Rodoviária, sua cidade" />
+        </div>
+        <div class="car">
+          <div class="field">
+            <label for="kmL">Consumo (km/litro)</label>
+            <input type="text" id="kmL" value="12" inputmode="decimal" />
+          </div>
+          <div class="field">
+            <label for="price">Preço do litro (R$)</label>
+            <input type="text" id="price" value="6.00" inputmode="decimal" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="trips">Quantas vezes você faz essa rota por semana?</label>
+          <input type="text" id="trips" value="10" inputmode="numeric" />
+        </div>
+        <div class="field">
+          <label for="traffic">Trânsito no horário</label>
+          <select id="traffic">
+            <option value="0">Livre (madrugada / fim de semana)</option>
+            <option value="1" selected>Normal</option>
+            <option value="2">Hora do rush (pico)</option>
+          </select>
+        </div>
+        <div class="examples">
+          <span class="ex-label">Exemplos p/ testar:</span>
+          <button type="button" class="chip" data-o="Sé, São Paulo" data-d="Gonzaga, Santos, SP">SP → Santos (serra)</button>
+          <button type="button" class="chip" data-o="Praça Sete, Belo Horizonte" data-d="Centro, Nova Lima, MG">BH → Nova Lima</button>
+          <button type="button" class="chip" data-o="Centro, Petrópolis, RJ" data-d="Centro, Rio de Janeiro, RJ">Petrópolis → Rio</button>
+        </div>
+        <button class="go" id="go">Comparar rotas</button>
+      </div>
+      <div class="status" id="status"></div>
+      <div id="summary"></div>
+      <div id="legend"></div>
+      <div class="routes" id="routes"></div>
+      <footer>
+        Dados: mapa OpenStreetMap · rotas OSRM · altitude Open-Meteo. <br />
+        "Subida total" = soma de todos os trechos em que a rota ganha altitude.
+        É o melhor termômetro simples de consumo em cidades com ladeiras.
+      </footer>
+    </aside>
+    <div id="map"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script>
+  (function () {
+    const COLORS = ["#34d399", "#38bdf8", "#f472b6", "#fbbf24"];
+    const map = L.map("map", { zoomControl: true }).setView([-15.78, -47.93], 5);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "© OpenStreetMap"
+    }).addTo(map);
+
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    const routesEl = $("routes");
+    let drawnLayers = [];
+    let markers = [];
+    let fixedOrigin = null; // usado quando a origem vem da localização do GPS
+
+    function setStatus(msg, isErr) {
+      statusEl.textContent = msg || "";
+      statusEl.className = "status" + (isErr ? " err" : "");
+    }
+
+    async function geocode(q) {
+      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q);
+      const r = await fetch(url, { headers: { "Accept": "application/json" } });
+      const data = await r.json();
+      if (!data.length) throw new Error('Não encontrei o endereço: "' + q + '"');
+      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name };
+    }
+
+    async function reverseGeocode(lat, lon) {
+      try {
+        const url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=" + lat + "&lon=" + lon;
+        const r = await fetch(url, { headers: { "Accept": "application/json" } });
+        const d = await r.json();
+        return d.display_name || null;
+      } catch (e) { return null; }
+    }
+
+    function useMyLocation() {
+      if (!navigator.geolocation) { setStatus("Seu navegador não suporta localização.", true); return; }
+      setStatus("Obtendo sua localização…");
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        fixedOrigin = { lat, lon, name: "Minha localização" };
+        $("orig").value = "📍 Minha localização";
+        const addr = await reverseGeocode(lat, lon);
+        if (addr) $("orig").value = addr;
+        setStatus("✅ Localização definida — agora informe o destino.");
+      }, () => {
+        setStatus("Não consegui acessar sua localização (permissão negada?).", true);
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    }
+
+    async function getRoutes(a, b) {
+      const coords = a.lon + "," + a.lat + ";" + b.lon + "," + b.lat;
+      const url = "https://router.project-osrm.org/route/v1/driving/" + coords +
+        "?alternatives=true&overview=full&geometries=geojson";
+      const r = await fetch(url);
+      const data = await r.json();
+      if (data.code !== "Ok" || !data.routes || !data.routes.length)
+        throw new Error("Não consegui calcular rotas entre esses pontos.");
+      return data.routes;
+    }
+
+    // sample up to `max` evenly spaced points from a [lon,lat] array
+    function sample(coordsLonLat, max) {
+      const n = coordsLonLat.length;
+      if (n <= max) return coordsLonLat.slice();
+      const out = [];
+      for (let i = 0; i < max; i++) {
+        out.push(coordsLonLat[Math.round(i * (n - 1) / (max - 1))]);
+      }
+      return out;
+    }
+
+    async function getElevations(pts) {
+      const lats = pts.map(p => p[1].toFixed(5)).join(",");
+      const lons = pts.map(p => p[0].toFixed(5)).join(",");
+      const url = "https://api.open-meteo.com/v1/elevation?latitude=" + lats + "&longitude=" + lons;
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!data.elevation) throw new Error("Falha ao obter altitudes.");
+      return data.elevation;
+    }
+
+    function climbFrom(elevs) {
+      let gain = 0;
+      for (let i = 1; i < elevs.length; i++) {
+        const d = elevs[i] - elevs[i - 1];
+        if (d > 0) gain += d;
+      }
+      return gain;
+    }
+
+    // Estimativa de combustível:
+    //  - parte plana: distância ÷ consumo do carro
+    //  - parte de subida: energia p/ erguer o carro (massa·g·altura) convertida em litros
+    const MASS = 1400;          // kg (carro médio)
+    const G = 9.81;             // gravidade
+    const USEFUL_J_PER_L = 8.5e6; // energia útil por litro de gasolina (após perdas do motor)
+    const CO2_PER_L = 2.31;       // kg de CO2 por litro de gasolina queimado
+    const WEEKS_PER_MONTH = 4.33;
+    function tripsPerWeek() {
+      return Math.max(0, parseFloat(($("trips").value || "").replace(",", ".")) || 0);
+    }
+    function trafficLevel() {
+      return parseInt($("traffic").value, 10) || 0; // 0 livre, 1 normal, 2 pico
+    }
+    // quão "urbana" é a rota (0 = rodovia rápida, 1 = trânsito de cidade),
+    // deduzida da velocidade média que o roteador estimou
+    function urbanFactor(route) {
+      const avgKmh = (route.distance / 1000) / (route.duration / 3600);
+      return Math.min(1, Math.max(0, (80 - avgKmh) / 60));
+    }
+    function carParams() {
+      const kmL = Math.max(1, parseFloat(($("kmL").value || "").replace(",", ".")) || 12);
+      const price = Math.max(0, parseFloat(($("price").value || "").replace(",", ".")) || 0);
+      return { kmL, price };
+    }
+
+    function fmtKm(m) { return (m / 1000).toFixed(1); }
+    function fmtMin(s) { return Math.round(s / 60); }
+
+    function profileSvg(elevs, color) {
+      const w = 320, h = 60, pad = 4;
+      const min = Math.min(...elevs), max = Math.max(...elevs);
+      const range = Math.max(1, max - min);
+      const pts = elevs.map((e, i) => {
+        const x = pad + i * (w - 2 * pad) / (elevs.length - 1);
+        const y = h - pad - (e - min) / range * (h - 2 * pad);
+        return x.toFixed(1) + "," + y.toFixed(1);
+      }).join(" ");
+      const area = "M" + pad + "," + (h - pad) + " L" + pts.replace(/ /g, " L") + " L" + (w - pad) + "," + (h - pad) + " Z";
+      return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+        '<path d="' + area + '" fill="' + color + '22" />' +
+        '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="2" />' +
+        '</svg>';
+    }
+
+    function clearMap() {
+      drawnLayers.forEach(l => map.removeLayer(l));
+      markers.forEach(m => map.removeLayer(m));
+      if (slopeGroup) { map.removeLayer(slopeGroup); slopeGroup = null; }
+      drawnLayers = []; markers = [];
+    }
+
+    let routeData = [];
+    let lastA = null, lastB = null;
+    let slopeGroup = null; // camada colorida por inclinação da rota selecionada
+
+    // distância horizontal em metros entre dois pontos [lon,lat]
+    function hdist(a, b) {
+      const R = 6371000, toR = Math.PI / 180;
+      const dLat = (b[1] - a[1]) * toR, dLon = (a[0] - b[0]) * toR;
+      const lat1 = a[1] * toR, lat2 = b[1] * toR;
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    // cor de acordo com a inclinação (grade = subida ÷ distância horizontal)
+    function slopeColor(grade) {
+      if (grade > 0.08) return "#dc2626";   // íngreme
+      if (grade > 0.04) return "#f97316";   // forte
+      if (grade > 0.015) return "#fbbf24";  // leve
+      if (grade < -0.015) return "#34d399"; // descida
+      return "#60a5fa";                     // plano
+    }
+
+    function buildSlopeLayer(rd) {
+      const g = L.layerGroup();
+      const pts = rd.pts, el = rd.elevs;
+      for (let i = 1; i < pts.length; i++) {
+        const d = hdist(pts[i - 1], pts[i]);
+        const grade = d > 3 ? (el[i] - el[i - 1]) / d : 0;
+        L.polyline(
+          [[pts[i - 1][1], pts[i - 1][0]], [pts[i][1], pts[i][0]]],
+          { color: slopeColor(grade), weight: 8, opacity: 0.95, lineCap: "round" }
+        ).addTo(g);
+      }
+      return g;
+    }
+
+    function highlight(idx) {
+      drawnLayers.forEach((l, i) => {
+        // rota selecionada fica bem apagada (o destaque colorido entra por cima);
+        // as outras ficam visíveis na sua cor para mostrar que há alternativas
+        l.setStyle({ weight: i === idx ? 3 : 4, opacity: i === idx ? 0.15 : 0.55 });
+      });
+      if (slopeGroup) { map.removeLayer(slopeGroup); slopeGroup = null; }
+      const rd = routeData[idx];
+      if (rd && rd.pts) { slopeGroup = buildSlopeLayer(rd); slopeGroup.addTo(map); }
+      document.querySelectorAll(".route-card").forEach((c, i) => {
+        c.style.outline = i === idx ? "2px solid #38bdf8" : "none";
+      });
+    }
+
+    function render(a, b, fit) {
+      lastA = a; lastB = b;
+      routesEl.innerHTML = "";
+      clearMap();
+
+      markers.push(L.marker([a.lat, a.lon]).addTo(map).bindPopup("Origem"));
+      markers.push(L.marker([b.lat, b.lon]).addTo(map).bindPopup("Destino"));
+
+      const level = trafficLevel();
+      const { kmL, price } = carParams();
+      routeData.forEach(rd => {
+        const urban = urbanFactor(rd.route);
+        const timeMult = 1 + level * 0.35 * urban; // trânsito atrasa mais as rotas urbanas
+        const fuelMult = 1 + level * 0.20 * urban; // parar-e-andar gasta mais combustível
+        const distKm = rd.route.distance / 1000;
+        const flat = (distKm / kmL) * fuelMult;
+        const extra = (MASS * G * rd.climb) / USEFUL_J_PER_L; // energia das subidas
+        rd.urban = urban;
+        rd.duration = rd.route.duration * timeMult;
+        rd.liters = flat + extra;
+        rd.cost = rd.liters * price;
+        rd.co2 = rd.liters * CO2_PER_L;
+      });
+      const bestIdx = routeData.reduce((best, r, i) =>
+        r.liters < routeData[best].liters ? i : best, 0);
+      const fastIdx = routeData.reduce((f, r, i) =>
+        r.duration < routeData[f].duration ? i : f, 0);
+      const timeLabel = level > 0 ? "tempo c/ trânsito" : "tempo est.";
+
+      const allLatLngs = [];
+      routeData.forEach((rd, i) => {
+        const color = COLORS[i % COLORS.length];
+        const latlngs = rd.route.geometry.coordinates.map(c => [c[1], c[0]]);
+        allLatLngs.push(...latlngs);
+        const line = L.polyline(latlngs, { color, weight: 4, opacity: 0.7 }).addTo(map);
+        line.bindTooltip((i === 0 ? "Rota principal" : "Alternativa " + i) +
+          " · R$ " + rd.cost.toFixed(2), { sticky: true });
+        line.on("click", () => highlight(i));
+        drawnLayers.push(line);
+
+        const card = document.createElement("div");
+        card.className = "route-card" + (i === bestIdx ? " best" : "");
+        card.innerHTML =
+          '<div class="route-head">' +
+            '<div class="route-name"><span class="swatch" style="background:' + color + '"></span>' +
+              (i === 0 ? "Rota principal" : "Alternativa " + i) +
+              (i === fastIdx ? '<span class="tag-fast">MAIS RÁPIDA</span>' : '') + '</div>' +
+            (i === bestIdx ? '<span class="badge">MAIS ECONÔMICA ⛽</span>' : '') +
+          '</div>' +
+          '<div class="metrics">' +
+            '<div class="metric fuel"><div class="v">R$ ' + rd.cost.toFixed(2) + '</div><div class="k">custo estimado</div></div>' +
+            '<div class="metric"><div class="v">' + rd.liters.toFixed(2) + '<small> L</small></div><div class="k">combustível</div></div>' +
+            '<div class="metric co2"><div class="v">' + rd.co2.toFixed(1) + '<small> kg</small></div><div class="k">CO₂</div></div>' +
+          '</div>' +
+          '<div class="metrics">' +
+            '<div class="metric climb"><div class="v">' + Math.round(rd.climb) + '<small> m</small></div><div class="k">subida total</div></div>' +
+            '<div class="metric"><div class="v">' + fmtKm(rd.route.distance) + '<small> km</small></div><div class="k">distância</div></div>' +
+            '<div class="metric"><div class="v">' + fmtMin(rd.duration) + '<small> min</small></div><div class="k">' + timeLabel + '</div></div>' +
+          '</div>' +
+          '<div class="profile">' + profileSvg(rd.elevs, color) + '</div>';
+        card.addEventListener("click", () => highlight(i));
+        routesEl.appendChild(card);
+      });
+
+      if (fit !== false) map.fitBounds(L.latLngBounds(allLatLngs), { padding: [40, 40] });
+      highlight(bestIdx);
+
+      document.getElementById("legend").innerHTML =
+        '<div class="legend"><span class="legend-title">No mapa, a rota selecionada mostra as ladeiras:</span>' +
+        '<span class="dot" style="background:#34d399"></span>descida' +
+        '<span class="dot" style="background:#60a5fa"></span>plano' +
+        '<span class="dot" style="background:#fbbf24"></span>leve' +
+        '<span class="dot" style="background:#f97316"></span>forte' +
+        '<span class="dot" style="background:#dc2626"></span>íngreme</div>';
+
+      const summaryEl = document.getElementById("summary");
+      const best = routeData[bestIdx];
+      const fast = routeData[fastIdx];
+      const trips = tripsPerWeek();
+      const monthlyTrips = trips * WEEKS_PER_MONTH;
+
+      if (routeData.length > 1 && bestIdx !== fastIdx) {
+        const dR = fast.cost - best.cost;
+        const dL = fast.liters - best.liters;
+        const dCo2 = fast.co2 - best.co2;
+        const extraMin = Math.round((best.duration - fast.duration) / 60);
+        summaryEl.innerHTML =
+          '<div class="summary">' +
+            '<h3>💡 Vale trocar de rota</h3>' +
+            '<div class="lead">Trocando a rota mais rápida pela mais econômica, cada viagem economiza ' +
+              '<b>R$ ' + dR.toFixed(2) + '</b>, <b>' + dL.toFixed(2) + ' L</b> e <b>' + dCo2.toFixed(1) + ' kg</b> de CO₂' +
+              (extraMin > 0 ? ', custando só ' + extraMin + ' min a mais' : '') + '.</div>' +
+            (monthlyTrips > 0 ?
+              '<div class="big">R$ ' + (dR * monthlyTrips).toFixed(2) + '<span class="sub"> / mês</span></div>' +
+              '<div class="sub">e ' + (dCo2 * monthlyTrips).toFixed(0) + ' kg de CO₂ a menos por mês · ' +
+                trips + ' viagens/semana</div>' : '') +
+          '</div>';
+        setStatus("");
+      } else if (routeData.length > 1) {
+        summaryEl.innerHTML = '<div class="summary"><h3>👍 Boa notícia</h3>' +
+          '<div class="lead">Neste trajeto, a rota mais rápida já é também a mais econômica.</div></div>';
+        setStatus("");
+      } else {
+        summaryEl.innerHTML = "";
+        setStatus("✅ Pronto — 1 rota analisada (não havia caminho alternativo aqui).");
+      }
+    }
+
+    // recalcula os custos ao vivo quando você muda o carro (sem refazer a busca)
+    function recompute() {
+      if (routeData.length && lastA && lastB) render(lastA, lastB, false);
+    }
+
+    async function run() {
+      const o = $("orig").value.trim();
+      const d = $("dest").value.trim();
+      if (!o || !d) { setStatus("Preencha origem e destino.", true); return; }
+      $("go").disabled = true;
+      routesEl.innerHTML = "";
+      document.getElementById("summary").innerHTML = "";
+      document.getElementById("legend").innerHTML = "";
+      try {
+        setStatus("Procurando endereços…");
+        let a;
+        if (fixedOrigin) {
+          a = fixedOrigin;
+        } else {
+          a = await geocode(o);
+          await new Promise(r => setTimeout(r, 1100)); // respeita limite do Nominatim
+        }
+        const b = await geocode(d);
+
+        setStatus("Calculando rotas possíveis…");
+        const routes = await getRoutes(a, b);
+
+        setStatus("Medindo as subidas de cada rota…");
+        routeData = [];
+        for (const route of routes) {
+          const pts = sample(route.geometry.coordinates, 100);
+          const elevs = await getElevations(pts);
+          routeData.push({ route, elevs, pts, climb: climbFrom(elevs) });
+          await new Promise(r => setTimeout(r, 300));
+        }
+        render(a, b);
+      } catch (e) {
+        setStatus("⚠️ " + e.message, true);
+      } finally {
+        $("go").disabled = false;
+      }
+    }
+
+    $("go").addEventListener("click", run);
+    $("dest").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+    $("kmL").addEventListener("input", recompute);
+    $("price").addEventListener("input", recompute);
+    $("trips").addEventListener("input", recompute);
+    $("traffic").addEventListener("change", recompute);
+    $("orig").addEventListener("input", () => { fixedOrigin = null; });
+    $("geo").addEventListener("click", useMyLocation);
+    document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+      fixedOrigin = null;
+      $("orig").value = c.getAttribute("data-o");
+      $("dest").value = c.getAttribute("data-d");
+      run();
+    }));
+
+    // ---- PWA: instalação e service worker ----
+    let deferredPrompt = null;
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      $("install").hidden = false;
+    });
+    $("install").addEventListener("click", async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      $("install").hidden = true;
+    });
+    window.addEventListener("appinstalled", () => { $("install").hidden = true; });
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch((err) =>
+          console.warn("Falha ao registrar o service worker:", err));
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
