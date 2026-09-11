@@ -781,8 +781,14 @@
         }
         const p = 0.008;
         const bbox = (minLat - p) + "," + (minLon - p) + "," + (maxLat + p) + "," + (maxLon + p);
-        const q = '[out:json][timeout:25];node["highway"="speed_camera"](' + bbox + ');out;';
-        const data = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q)).then(r => r.json());
+        const q = '[out:json][timeout:20];node["highway"="speed_camera"](' + bbox + ');out;';
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 15000); // não trava esperando para sempre
+        let data;
+        try {
+          const resp = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(q), { signal: ctrl.signal });
+          data = await resp.json();
+        } finally { clearTimeout(to); }
         const raw = (data.elements || []).map(e => ({
           lat: e.lat, lon: e.lon, max: (e.tags && (e.tags.maxspeed || e.tags["maxspeed:forward"])) || ""
         }));
