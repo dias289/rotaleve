@@ -791,9 +791,10 @@
           const nr = nearestIdx(coords, cam.lon, cam.lat);
           return { id: id++, lat: cam.lat, lon: cam.lon, max: cam.max, idx: nr.idx, distR: nr.dist };
         }).filter(cam => cam.distR < 45); // só os radares que estão na nossa rota
+        try { window.__navCamCount = navCameras.length; window.__navCamErr = null; } catch (e) {}
         if (glMap && glReady) setGLCameras();
         else if (glMap) glPendingCameras = true;
-      } catch (e) {}
+      } catch (e) { try { window.__navCamErr = String(e); } catch (_) {} }
     }
     function setGLCameras() {
       if (!glMap) return;
