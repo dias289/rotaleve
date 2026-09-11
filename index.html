@@ -333,6 +333,11 @@
     async function getRoutes(a, b) {
       const coords = a.lon + "," + a.lat + ";" + b.lon + "," + b.lat;
 
+      // Se ainda não temos o token do Mapbox (mas o app está licenciado), tenta buscá-lo agora.
+      if (!MAPBOX.token && LICENSE.enabled && LICENSE.endpoint) {
+        try { await loadMapboxToken(); } catch (e) {}
+      }
+
       // Com token do Mapbox: rotas com TRÂNSITO REAL (perfil driving-traffic).
       if (MAPBOX.token) {
         const url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" + coords +
@@ -726,7 +731,7 @@
         s.onerror = () => { if (!done) { cleanup(); reject(new Error("rede")); } };
         s.src = LICENSE.endpoint + (LICENSE.endpoint.indexOf("?") >= 0 ? "&" : "?") + q + "&callback=" + cb;
         document.body.appendChild(s);
-        setTimeout(() => { if (!done) { cleanup(); reject(new Error("timeout")); } }, 12000);
+        setTimeout(() => { if (!done) { cleanup(); reject(new Error("timeout")); } }, 20000);
       });
     }
     async function licenseActivate(key) {
