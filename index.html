@@ -131,6 +131,52 @@
       font-size: 13px; color: var(--accent); background: var(--panel-2);
       border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; line-height: 1.4;
     }
+    /* ---- Visual de aplicativo ---- */
+    .panel { display: flex; flex-direction: column; gap: 12px; }
+    .searchcard {
+      display: flex; align-items: stretch; gap: 6px;
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 16px; padding: 6px 8px 6px 10px; box-shadow: 0 2px 10px rgba(0,0,0,.25);
+    }
+    .dots { display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 4px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+    .dot-o { background: var(--accent); }
+    .dot-d { background: var(--bad); }
+    .dot-line { width: 2px; flex: 1; min-height: 14px; background: var(--line); margin: 3px 0; }
+    .sc-fields { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .acwrap { position: relative; }
+    .searchcard input {
+      width: 100%; border: none; background: none; color: var(--text);
+      font-size: 15px; padding: 11px 6px;
+    }
+    .searchcard input:focus { outline: none; }
+    .sc-divider { height: 1px; background: var(--line); margin: 0 6px; }
+    .swap {
+      align-self: center; background: var(--panel); border: 1px solid var(--line); color: var(--text);
+      width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 15px; flex: none;
+    }
+    .swap:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .ac {
+      position: absolute; left: 0; right: 0; top: 100%; z-index: 60;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-top: 6px;
+      max-height: 240px; overflow-y: auto; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+    }
+    .ac[hidden] { display: none !important; }
+    .ac-item { padding: 10px 12px; font-size: 13px; cursor: pointer; border-bottom: 1px solid var(--line); }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:hover, .ac-item.active { background: var(--panel-2); }
+    .ac-item .ac-main { color: var(--text); }
+    .ac-item .ac-sub { color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .settings { border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); overflow: hidden; }
+    .settings > summary {
+      padding: 12px 14px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text);
+      list-style: none; display: flex; justify-content: space-between; align-items: center;
+    }
+    .settings > summary::-webkit-details-marker { display: none; }
+    .settings > summary::after { content: "▾"; color: var(--muted); }
+    .settings[open] > summary::after { content: "▴"; }
+    .settings-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .settings-body .field { margin-bottom: 0; }
     .status { font-size: 13px; color: var(--accent-2); min-height: 18px; }
     .status.err { color: var(--bad); }
     .routes { display: flex; flex-direction: column; gap: 10px; }
@@ -254,50 +300,64 @@
 <body>
   <header>
     <h1>Rota<span>Leve</span></h1>
-    <span class="tag">Protótipo · compara rotas pela quantidade de subida (menos subida = menos combustível)</span>
-    <button id="install" class="install-btn" hidden>📲 Instalar app</button>
+    <button id="install" class="install-btn" hidden>📲 Instalar</button>
   </header>
 
   <div class="layout">
     <aside class="sidebar">
-      <div>
-        <div class="field">
-          <label for="orig">Origem</label>
-          <input type="text" id="orig" placeholder="Ex: Praça Central, sua cidade" />
-          <button type="button" id="geo" class="linkbtn">📍 Usar minha localização</button>
-        </div>
-        <div class="field">
-          <label for="dest">Destino</label>
-          <input type="text" id="dest" placeholder="Ex: Rodoviária, sua cidade" />
-        </div>
-        <div class="car">
-          <div class="field">
-            <label for="kmL">Consumo (km/litro)</label>
-            <input type="text" id="kmL" value="12" inputmode="decimal" />
+      <div class="panel">
+        <div class="searchcard">
+          <div class="dots"><span class="dot dot-o"></span><span class="dot-line"></span><span class="dot dot-d"></span></div>
+          <div class="sc-fields">
+            <div class="acwrap">
+              <input type="text" id="orig" placeholder="Origem" autocomplete="off" />
+              <div class="ac" id="acOrig" hidden></div>
+            </div>
+            <div class="sc-divider"></div>
+            <div class="acwrap">
+              <input type="text" id="dest" placeholder="Para onde?" autocomplete="off" />
+              <div class="ac" id="acDest" hidden></div>
+            </div>
           </div>
-          <div class="field">
-            <label for="price">Preço do litro (R$)</label>
-            <input type="text" id="price" value="6.00" inputmode="decimal" />
-          </div>
+          <button type="button" id="swap" class="swap" title="Inverter" aria-label="Inverter origem e destino">⇅</button>
         </div>
-        <div class="field">
-          <label for="trips">Quantas vezes você faz essa rota por semana?</label>
-          <input type="text" id="trips" value="10" inputmode="numeric" />
-        </div>
-        <div class="field" id="trafficField">
-          <label for="traffic">Trânsito no horário</label>
-          <select id="traffic">
-            <option value="0">Livre (madrugada / fim de semana)</option>
-            <option value="1" selected>Normal</option>
-            <option value="2">Hora do rush (pico)</option>
-          </select>
-        </div>
+        <button type="button" id="geo" class="linkbtn">📍 Usar minha localização</button>
+
         <div class="examples">
-          <span class="ex-label">Exemplos p/ testar:</span>
-          <button type="button" class="chip" data-o="Sé, São Paulo" data-d="Gonzaga, Santos, SP">SP → Santos (serra)</button>
+          <span class="ex-label">Exemplos:</span>
+          <button type="button" class="chip" data-o="Sé, São Paulo" data-d="Gonzaga, Santos, SP">SP → Santos</button>
           <button type="button" class="chip" data-o="Praça Sete, Belo Horizonte" data-d="Centro, Nova Lima, MG">BH → Nova Lima</button>
           <button type="button" class="chip" data-o="Centro, Petrópolis, RJ" data-d="Centro, Rio de Janeiro, RJ">Petrópolis → Rio</button>
         </div>
+
+        <details class="settings">
+          <summary>⚙️ Meu carro e trânsito</summary>
+          <div class="settings-body">
+            <div class="car">
+              <div class="field">
+                <label for="kmL">Consumo (km/l)</label>
+                <input type="text" id="kmL" value="12" inputmode="decimal" />
+              </div>
+              <div class="field">
+                <label for="price">Preço (R$/l)</label>
+                <input type="text" id="price" value="6.00" inputmode="decimal" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="trips">Viagens por semana</label>
+              <input type="text" id="trips" value="10" inputmode="numeric" />
+            </div>
+            <div class="field" id="trafficField">
+              <label for="traffic">Trânsito</label>
+              <select id="traffic">
+                <option value="0">Livre (madrugada / fim de semana)</option>
+                <option value="1" selected>Normal</option>
+                <option value="2">Hora do rush (pico)</option>
+              </select>
+            </div>
+          </div>
+        </details>
+
         <button class="go" id="go">Comparar rotas</button>
       </div>
       <div class="status" id="status"></div>
@@ -305,9 +365,7 @@
       <div id="legend"></div>
       <div class="routes" id="routes"></div>
       <footer>
-        <span id="credits">Dados: mapa OpenStreetMap · rotas OSRM · altitude Open-Meteo.</span> <br />
-        "Subida total" = soma de todos os trechos em que a rota ganha altitude.
-        É o melhor termômetro simples de consumo em cidades com ladeiras.
+        <span id="credits">Dados: OpenStreetMap · OSRM · Open-Meteo.</span>
       </footer>
     </aside>
     <div id="map"></div>
@@ -362,6 +420,7 @@
     let drawnLayers = [];
     let markers = [];
     let fixedOrigin = null; // usado quando a origem vem da localização do GPS
+    let pickedOrigin = null, pickedDest = null; // coordenadas escolhidas no autocompletar
 
     function setStatus(msg, isErr) {
       statusEl.textContent = msg || "";
@@ -390,7 +449,7 @@
       setStatus("Obtendo sua localização…");
       navigator.geolocation.getCurrentPosition(async (pos) => {
         const lat = pos.coords.latitude, lon = pos.coords.longitude;
-        fixedOrigin = { lat, lon, name: "Minha localização" };
+        fixedOrigin = { lat, lon, name: "Minha localização" }; pickedOrigin = null;
         $("orig").value = "📍 Minha localização";
         const addr = await reverseGeocode(lat, lon);
         if (addr) $("orig").value = addr;
@@ -1022,14 +1081,13 @@
       document.getElementById("legend").innerHTML = "";
       try {
         setStatus("Procurando endereços…");
+        const bothGeocode = (!fixedOrigin && !pickedOrigin) && !pickedDest;
         let a;
-        if (fixedOrigin) {
-          a = fixedOrigin;
-        } else {
-          a = await geocode(o);
-          await new Promise(r => setTimeout(r, 1100)); // respeita limite do Nominatim
-        }
-        const b = await geocode(d);
+        if (fixedOrigin) a = fixedOrigin;
+        else if (pickedOrigin) a = pickedOrigin;
+        else a = await geocode(o);
+        if (bothGeocode) await new Promise(r => setTimeout(r, 1100)); // respeita limite do Nominatim
+        const b = pickedDest ? pickedDest : await geocode(d);
 
         setStatus("Calculando rotas possíveis…");
         const routes = await getRoutes(a, b);
@@ -1063,14 +1121,71 @@
     $("price").addEventListener("input", recompute);
     $("trips").addEventListener("input", recompute);
     $("traffic").addEventListener("change", recompute);
-    $("orig").addEventListener("input", () => { fixedOrigin = null; });
     $("geo").addEventListener("click", useMyLocation);
     document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
-      fixedOrigin = null;
+      fixedOrigin = null; pickedOrigin = null; pickedDest = null;
       $("orig").value = c.getAttribute("data-o");
       $("dest").value = c.getAttribute("data-d");
+      hideAc($("acOrig")); hideAc($("acDest"));
       run();
     }));
+
+    // ---- Autocompletar de endereços (via Mapbox) ----
+    function hideAc(el) { el.hidden = true; el.innerHTML = ""; }
+    function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+    async function queryAc(q, acEl, input, onPick) {
+      if (!MAPBOX.token) return;
+      try {
+        const url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(q) +
+          ".json?access_token=" + encodeURIComponent(MAPBOX.token) + "&country=br&language=pt&limit=5&autocomplete=true";
+        const data = await fetch(url).then(r => r.json());
+        const feats = data.features || [];
+        if (!feats.length) { hideAc(acEl); return; }
+        acEl.innerHTML = "";
+        feats.forEach(f => {
+          const div = document.createElement("div");
+          div.className = "ac-item";
+          div.innerHTML = '<div class="ac-main">' + escapeHtml(f.text || f.place_name) + '</div>' +
+            '<div class="ac-sub">' + escapeHtml(f.place_name) + '</div>';
+          div.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            input.value = f.place_name;
+            onPick({ lat: f.center[1], lon: f.center[0], name: f.place_name });
+            hideAc(acEl);
+          });
+          acEl.appendChild(div);
+        });
+        acEl.hidden = false;
+      } catch (e) { hideAc(acEl); }
+    }
+    function attachAutocomplete(input, acEl, onPick, onClear) {
+      let t = null;
+      input.addEventListener("input", () => {
+        onClear();
+        const q = input.value.trim();
+        clearTimeout(t);
+        if (q.length < 3 || !MAPBOX.token) { hideAc(acEl); return; }
+        t = setTimeout(() => queryAc(q, acEl, input, onPick), 300);
+      });
+      input.addEventListener("blur", () => { setTimeout(() => { acEl.hidden = true; }, 150); });
+      input.addEventListener("focus", () => { if (acEl.children.length) acEl.hidden = false; });
+    }
+    attachAutocomplete($("orig"), $("acOrig"),
+      (c) => { pickedOrigin = c; fixedOrigin = null; },
+      () => { pickedOrigin = null; fixedOrigin = null; });
+    attachAutocomplete($("dest"), $("acDest"),
+      (c) => { pickedDest = c; },
+      () => { pickedDest = null; });
+
+    // Inverter origem ↔ destino
+    $("swap").addEventListener("click", () => {
+      const ov = $("orig").value, dv = $("dest").value;
+      $("orig").value = dv; $("dest").value = ov;
+      let po = pickedOrigin;
+      if (fixedOrigin) { po = fixedOrigin; fixedOrigin = null; }
+      pickedOrigin = pickedDest; pickedDest = po;
+      hideAc($("acOrig")); hideAc($("acDest"));
+    });
 
     // Dica de instalação no iPhone (Safari não tem botão de instalar automático)
     (function iosHint() {
