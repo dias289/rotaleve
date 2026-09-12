@@ -1137,7 +1137,8 @@
       if (!MAPBOX.token) return;
       try {
         const url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(q) +
-          ".json?access_token=" + encodeURIComponent(MAPBOX.token) + "&country=br&language=pt&limit=5&autocomplete=true";
+          ".json?access_token=" + encodeURIComponent(MAPBOX.token) +
+          "&country=br&language=pt&limit=5&autocomplete=true&proximity=ip";
         const data = await fetch(url).then(r => r.json());
         const feats = data.features || [];
         if (!feats.length) { hideAc(acEl); return; }
