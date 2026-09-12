@@ -261,6 +261,26 @@
       border-radius: 12px; padding: 10px 14px; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.45);
     }
     .nav-cam[hidden] { display: none !important; }
+    .speedo {
+      position: absolute; bottom: calc(24px + env(safe-area-inset-bottom)); left: 50%;
+      transform: translateX(-50%); pointer-events: none; display: flex; align-items: center; gap: 10px; z-index: 1;
+    }
+    .speedo[hidden] { display: none !important; }
+    .spd-now {
+      background: var(--panel); border: 3px solid var(--line); border-radius: 50%;
+      width: 76px; height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      box-shadow: 0 6px 20px rgba(0,0,0,.5);
+    }
+    .spd-now span { font-size: 27px; font-weight: 800; line-height: 1; color: var(--text); }
+    .spd-now small { font-size: 10px; color: var(--muted); }
+    .speedo.over .spd-now { border-color: var(--bad); }
+    .speedo.over .spd-now span { color: var(--bad); }
+    .spd-limit {
+      background: #fff; border: 5px solid #d11; border-radius: 50%; width: 54px; height: 54px;
+      display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,.4);
+    }
+    .spd-limit span { color: #111; font-weight: 800; font-size: 19px; }
+    .spd-limit[hidden] { display: none !important; }
     .ios-hint {
       position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
       z-index: 10000; background: var(--panel); border: 1px solid var(--accent-2); color: var(--text);
@@ -384,6 +404,10 @@
       <div class="nav-instr" id="navInstr">Iniciando navegação…</div>
     </div>
     <div id="navCam" class="nav-cam" hidden></div>
+    <div id="speedo" class="speedo" hidden>
+      <div class="spd-now"><span id="spdVal">0</span><small>km/h</small></div>
+      <div id="spdLimit" class="spd-limit" hidden><span id="spdLimitVal">–</span></div>
+    </div>
     <button id="navMute" class="nav-round" title="Voz">🔊</button>
     <button id="navExit" class="nav-round nav-exit">✕ Sair</button>
   </div>
@@ -470,7 +494,7 @@
       // Com token do Mapbox: rotas com TRÂNSITO REAL (perfil driving-traffic).
       if (MAPBOX.token) {
         const url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" + coords +
-          "?alternatives=true&geometries=geojson&overview=full&steps=true&language=pt&access_token=" +
+          "?alternatives=true&geometries=geojson&overview=full&steps=true&language=pt&annotations=maxspeed&access_token=" +
           encodeURIComponent(MAPBOX.token);
         const r = await fetch(url);
         const data = await r.json();
@@ -744,6 +768,7 @@
     let navMuted = false, wakeLock = null, navLastPt = null, navZoomSet = false;
     let navDest = null, navRouteCoords = [], offCount = 0, rerouting = false;
     let navCameras = [], camAlerted = {}, glPendingCameras = false;
+    let navMaxspeed = [], navLastTime = 0; // limites de velocidade da via + hora da última leitura
 
     // direção (0-360) entre dois pontos [lon,lat]
     function bearing(a, b) {
@@ -930,6 +955,7 @@
           .map(s => ({ instr: s.maneuver.instruction || "Siga em frente", loc: s.maneuver.location }));
         navIndex = 0; navAnnounced = {};
         navRouteCoords = r.geometry.coordinates;
+        navMaxspeed = (r.legs && r.legs[0] && r.legs[0].annotation && r.legs[0].annotation.maxspeed) || [];
         if (glMap && glReady) setGLRoute(navRouteCoords);
         else if (glMap) glPendingRoute = navRouteCoords;
         fetchCameras(navRouteCoords);
@@ -958,6 +984,28 @@
       $("navInstr").textContent = instr || "";
     }
 
+    // limite de velocidade (km/h) da via no ponto atual, segundo o Mapbox
+    function limitAt(idx) {
+      if (!navMaxspeed.length) return 0;
+      const m = navMaxspeed[Math.min(idx, navMaxspeed.length - 1)];
+      if (m && typeof m.speed === "number") {
+        return (m.unit === "mph") ? Math.round(m.speed * 1.60934) : m.speed;
+      }
+      return 0;
+    }
+    function updateSpeedo(kmh, limit) {
+      $("spdVal").textContent = kmh;
+      const sp = $("speedo");
+      if (limit && limit > 0) {
+        $("spdLimit").hidden = false;
+        $("spdLimitVal").textContent = limit;
+        sp.classList.toggle("over", kmh > limit + 3); // 3 km/h de tolerância
+      } else {
+        $("spdLimit").hidden = true;
+        sp.classList.remove("over");
+      }
+    }
+
     async function startNav(idx) {
       const rd = routeData[idx];
       if (!rd || !rd.steps || !rd.steps.length) {
@@ -970,8 +1018,13 @@
       navIndex = 0; navAnnounced = {}; navLastPt = null; navZoomSet = false;
       navRouteCoords = rd.route.geometry.coordinates;
       navDest = navRouteCoords[navRouteCoords.length - 1];
+      navMaxspeed = (rd.route.legs && rd.route.legs[0] && rd.route.legs[0].annotation &&
+        rd.route.legs[0].annotation.maxspeed) || [];
+      navLastTime = 0;
       offCount = 0; rerouting = false;
       $("navCam").hidden = true;
+      $("speedo").hidden = false;
+      updateSpeedo(0, 0);
       fetchCameras(navRouteCoords);
       document.body.classList.add("navigating");
       $("nav").hidden = false;
@@ -1020,18 +1073,32 @@
         const moved = hdist(navLastPt, [lon, lat]);
         if (moved > 3) heading = bearing(navLastPt, [lon, lat]);
       }
+      // velocidade: usa a do GPS; se não tiver, calcula pelo deslocamento
+      const now = Date.now();
+      let spd = pos.coords.speed;
+      if (spd == null || isNaN(spd) || spd < 0) {
+        if (navLastPt && navLastTime) {
+          const dt = (now - navLastTime) / 1000;
+          if (dt > 0) spd = hdist(navLastPt, [lon, lat]) / dt;
+        }
+      }
+      const kmh = (spd != null && spd >= 0 && isFinite(spd)) ? Math.round(spd * 3.6) : 0;
       navLastPt = [lon, lat];
+      navLastTime = now;
 
       navFollow(lat, lon, heading);
 
-      if (rerouting) return; // aguardando o recálculo terminar
+      if (rerouting) { updateSpeedo(kmh, 0); return; } // aguardando o recálculo terminar
 
       // progresso na rota + saiu da rota? (fora por 3 leituras seguidas → recalcula)
       if (navRouteCoords.length) {
         const near = nearestIdx(navRouteCoords, lon, lat);
+        updateSpeedo(kmh, limitAt(near.idx));
         if (near.dist > 55) { if (++offCount >= 3) { reroute(lat, lon); return; } }
         else offCount = 0;
         if (navCameras.length) checkCameras(lon, lat, near.idx);
+      } else {
+        updateSpeedo(kmh, 0);
       }
 
       let guard = 0;
@@ -1066,6 +1133,7 @@
       if (navMarker && navMarker._map) map.removeLayer(navMarker);
       if (glMarker) { try { glMarker.remove(); } catch (e) {} }
       $("navMap").hidden = true;
+      $("speedo").hidden = true;
       document.body.classList.remove("navigating");
       $("nav").hidden = true;
       setTimeout(() => map.invalidateSize(), 120);
